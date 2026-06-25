@@ -7,7 +7,7 @@ import ChatInput from './components/ChatInput.jsx'
 export default function App() {
   const { messages, isStreaming, error, sendMessage, clearChat, clearError } = useChat()
   const [input, setInput] = useState('')
-  const [model, setModel] = useState('claude-opus-4-6')
+  const [model, setModel] = useState('gpt-5-mini')
   const messagesEndRef = useRef(null)
   const abortRef = useRef(null)
 

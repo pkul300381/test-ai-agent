@@ -1,18 +1,18 @@
 """
 Payment Card Management AI Agent — FastAPI Backend
 
-Provides a streaming chat endpoint backed by Claude (Anthropic).
-Supports Claude Opus 4.6, Sonnet 4.6, and Haiku 4.5.
+Provides a streaming chat endpoint backed by OpenAI.
+Supports GPT-5, GPT-5 mini, and GPT-4.1.
 """
 
 import json
 import os
 
-import anthropic
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from openai import APIError, OpenAI
 from pydantic import BaseModel
 
 load_dotenv()
@@ -63,29 +63,28 @@ SYSTEM_PROMPT = """You are a Software Development Expert specializing in payment
 # Model registry
 # ---------------------------------------------------------------------------
 
-# Models that support adaptive thinking (Claude Opus 4.6 and Sonnet 4.6)
-THINKING_MODELS = {"claude-opus-4-6", "claude-sonnet-4-6"}
-
 AVAILABLE_MODELS = [
     {
-        "id": "claude-opus-4-6",
-        "name": "Claude Opus 4.6",
-        "description": "Most capable — adaptive thinking enabled",
-        "provider": "anthropic",
+        "id": "gpt-5-mini",
+        "name": "GPT-5 mini",
+        "description": "Default economical option",
+        "provider": "openai",
     },
     {
-        "id": "claude-sonnet-4-6",
-        "name": "Claude Sonnet 4.6",
-        "description": "Balanced speed & quality — adaptive thinking enabled",
-        "provider": "anthropic",
+        "id": "gpt-5",
+        "name": "GPT-5",
+        "description": "Most capable",
+        "provider": "openai",
     },
     {
-        "id": "claude-haiku-4-5",
-        "name": "Claude Haiku 4.5",
-        "description": "Fastest & most cost-effective",
-        "provider": "anthropic",
+        "id": "gpt-4.1",
+        "name": "GPT-4.1",
+        "description": "Fast and reliable",
+        "provider": "openai",
     },
 ]
+
+AVAILABLE_MODEL_IDS = {model["id"] for model in AVAILABLE_MODELS}
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -99,8 +98,18 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage]
-    model: str = "claude-opus-4-6"
+    model: str = "gpt-5-mini"
     stream: bool = True
+
+
+def build_openai_input(messages: list[ChatMessage]) -> list[dict]:
+    return [
+        {
+            "role": message.role,
+            "content": [{"type": "input_text", "text": message.content}],
+        }
+        for message in messages
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +121,7 @@ class ChatRequest(BaseModel):
 def health():
     return {
         "status": "ok",
-        "api_key_configured": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "api_key_configured": bool(os.environ.get("OPENAI_API_KEY")),
     }
 
 
@@ -123,38 +132,40 @@ def get_models():
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(
             status_code=500,
-            detail="ANTHROPIC_API_KEY is not set. Create backend/.env from .env.example.",
+            detail="OPENAI_API_KEY is not set. Create backend/.env from .env.example.",
         )
 
-    client = anthropic.Anthropic(api_key=api_key)
-    messages = [{"role": m.role, "content": m.content} for m in request.messages]
+    if request.model not in AVAILABLE_MODEL_IDS:
+        raise HTTPException(status_code=400, detail=f"Unsupported model: {request.model}")
 
-    create_kwargs: dict = {
+    client = OpenAI(api_key=api_key)
+    create_kwargs = {
         "model": request.model,
-        "system": SYSTEM_PROMPT,
-        "messages": messages,
+        "instructions": SYSTEM_PROMPT,
+        "input": build_openai_input(request.messages),
     }
 
-    # Adaptive thinking is supported on Opus 4.6 and Sonnet 4.6 only
-    if request.model in THINKING_MODELS:
-        create_kwargs["thinking"] = {"type": "adaptive"}
-
     if request.stream:
-        # Use higher max_tokens for streaming (no HTTP timeout risk)
-        create_kwargs["max_tokens"] = 64000
+        create_kwargs["stream"] = True
+        create_kwargs["max_output_tokens"] = 4000
 
         def generate():
+            stream = None
             try:
-                with client.messages.stream(**create_kwargs) as stream:
-                    for text in stream.text_stream:
-                        yield f"data: {json.dumps({'type': 'text', 'content': text})}\n\n"
+                stream = client.responses.create(**create_kwargs)
+                for event in stream:
+                    if event.type == "response.output_text.delta":
+                        yield f"data: {json.dumps({'type': 'text', 'content': event.delta})}\n\n"
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
-            except anthropic.APIError as exc:
+            except APIError as exc:
                 yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+            finally:
+                if stream is not None and hasattr(stream, "close"):
+                    stream.close()
 
         return StreamingResponse(
             generate(),
@@ -165,7 +176,7 @@ async def chat(request: ChatRequest):
             },
         )
     else:
-        create_kwargs["max_tokens"] = 16000
-        response = client.messages.create(**create_kwargs)
-        text = next((b.text for b in response.content if b.type == "text"), "")
+        create_kwargs["max_output_tokens"] = 4000
+        response = client.responses.create(**create_kwargs)
+        text = response.output_text
         return {"content": text, "model": request.model}

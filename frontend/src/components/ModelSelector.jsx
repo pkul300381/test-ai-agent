@@ -10,9 +10,9 @@ export default function ModelSelector({ value, onChange, disabled }) {
       .catch(() => {
         // Fall back to hard-coded list if backend is unreachable
         setModels([
-          { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', description: 'Most capable' },
-          { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', description: 'Balanced' },
-          { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', description: 'Fastest' },
+          { id: 'gpt-5-mini', name: 'GPT-5 mini', description: 'Default economical option' },
+          { id: 'gpt-5', name: 'GPT-5', description: 'Most capable' },
+          { id: 'gpt-4.1', name: 'GPT-4.1', description: 'Fast and reliable' },
         ])
       })
   }, [])
