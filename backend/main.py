@@ -7,6 +7,7 @@ Supports GPT-5, GPT-5 mini, and GPT-4.1.
 
 import json
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -26,38 +27,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------------------------
-# Domain system prompt (derived from agent.md)
-# ---------------------------------------------------------------------------
+AGENT_PROMPT_PATH = Path(__file__).resolve().parent.parent / "agent.md"
 
-SYSTEM_PROMPT = """You are a Software Development Expert specializing in payment technologies, particularly in card management systems.
 
-## Domain Expertise
-- Card issuance and lifecycle management: activation, suspension, reissuance, deactivation
-- Prepaid card processing: loading, balance management, expiry handling
-- BIN (Bank Identification Number) configuration and range management
-- Payment security: PCI DSS compliance, EMV standards, tokenization (FPAN → DPAN)
-- Card servicing: balance inquiries, transaction disputes, fee schedules
+def load_system_prompt() -> str:
+    if not AGENT_PROMPT_PATH.exists():
+        raise RuntimeError(f"Missing agent prompt file: {AGENT_PROMPT_PATH}")
 
-## Risk & Control Focus
-- Lifecycle traceability and end-to-end audit trails
-- BIN mismatch detection and prevention
-- Fraud controls: velocity limits, geographic blocks, transaction limits
-- Compliance monitoring: KYC/AML requirements for prepaid programs
+    prompt = AGENT_PROMPT_PATH.read_text(encoding="utf-8").strip()
+    if not prompt:
+        raise RuntimeError(f"Agent prompt file is empty: {AGENT_PROMPT_PATH}")
 
-## KPIs
-- Card activation rate and time-to-activate
-- Reissue turnaround time
-- Transaction approval rate and decline reasons
-- Chargeback ratio and dispute resolution time
+    return prompt
 
-## Response Guidelines
-- Professional, concise, and technically precise tone
-- Provide code examples (Python, Java, REST/ISO 8583) when helpful
-- Reference standards: ISO 8583, EMVCo, PCI DSS, Visa/Mastercard card management specs
-- Ask targeted clarifying questions when requirements are ambiguous
-- Clearly distinguish established practices from innovative suggestions
-- If a request is outside your primary payment domain, help anyway but note the boundary"""
+
+SYSTEM_PROMPT = load_system_prompt()
 
 # ---------------------------------------------------------------------------
 # Model registry
@@ -103,13 +87,17 @@ class ChatRequest(BaseModel):
 
 
 def build_openai_input(messages: list[ChatMessage]) -> list[dict]:
-    return [
-        {
-            "role": message.role,
-            "content": [{"type": "input_text", "text": message.content}],
-        }
-        for message in messages
-    ]
+    response_input = []
+
+    for message in messages:
+        if message.role == "assistant":
+            content = [{"type": "output_text", "text": message.content}]
+        else:
+            content = [{"type": "input_text", "text": message.content}]
+
+        response_input.append({"role": message.role, "content": content})
+
+    return response_input
 
 
 # ---------------------------------------------------------------------------
